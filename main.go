@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,7 +21,131 @@ type ConfigMapRef struct {
 	name      string
 }
 
+// Result structure to hold scanning results for each namespace
+type NamespaceScanResult struct {
+	namespace      string
+	usedConfigMaps map[ConfigMapRef]bool
+	err            error
+}
+
+func scanNamespace(ctx context.Context, clientset *kubernetes.Clientset, namespace string, resultChan chan<- NamespaceScanResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	result := NamespaceScanResult{
+		namespace:      namespace,
+		usedConfigMaps: make(map[ConfigMapRef]bool),
+	}
+
+	// Helper function to handle errors
+	handleError := func(err error) {
+		if err != nil {
+			fmt.Printf("Warning: error scanning resources in namespace %s: %v\n", namespace, err)
+		}
+	}
+
+	// Use a WaitGroup for parallel resource scanning within namespace
+	var resourceWg sync.WaitGroup
+	var resourceMutex sync.Mutex
+
+	// Scan Pods
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, pod := range pods.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(pod.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Scan Deployments
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		deployments, err := clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, deployment := range deployments.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(deployment.Spec.Template.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Scan StatefulSets
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		statefulsets, err := clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, sts := range statefulsets.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(sts.Spec.Template.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Scan DaemonSets
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		daemonsets, err := clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, ds := range daemonsets.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(ds.Spec.Template.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Scan Jobs
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		jobs, err := clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, job := range jobs.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(job.Spec.Template.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Scan CronJobs
+	resourceWg.Add(1)
+	go func() {
+		defer resourceWg.Done()
+		cronjobs, err := clientset.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+		handleError(err)
+		if err == nil {
+			for _, cronjob := range cronjobs.Items {
+				resourceMutex.Lock()
+				findConfigMapsInPodSpec(cronjob.Spec.JobTemplate.Spec.Template.Spec, namespace, result.usedConfigMaps)
+				resourceMutex.Unlock()
+			}
+		}
+	}()
+
+	// Wait for all resource scans to complete
+	resourceWg.Wait()
+	resultChan <- result
+}
+
 func main() {
+	// Number of concurrent workers for scanning namespaces
+	workers := 5
+
 	// Add flags
 	deleteUnused := flag.Bool("delete", false, "Delete unused ConfigMaps")
 	namespace := flag.String("namespace", "", "Namespace to scan for ConfigMaps")
@@ -33,6 +158,8 @@ func main() {
 
 	// Get the current context and configuration
 	config, err := kubeConfig.ClientConfig()
+	config.QPS = 100   // Incrase from default 5
+	config.Burst = 100 // Incrase from default 10
 	if err != nil {
 		fmt.Println(os.Stderr, "Error getting Kubernetes config: %v\n", err)
 		os.Exit(1)
@@ -60,7 +187,6 @@ func main() {
 	}
 
 	ctx := context.Background()
-	usedConfigMaps := make(map[ConfigMapRef]bool)
 
 	// Get namespaces to scan
 	var namespacesToScan []string
@@ -83,53 +209,36 @@ func main() {
 		}
 	}
 
-	// Scan each namespace
+	// Create channel for results and WaitGroup for goroutines
+	resultChan := make(chan NamespaceScanResult, len(namespacesToScan))
+	var wg sync.WaitGroup
+
+	// Process namespaces with worker pool
+	semaphore := make(chan struct{}, workers)
 	for _, ns := range namespacesToScan {
-		fmt.Printf("Scanning resources in namespace: %s\n", ns)
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire semaphore
+		go func(namespace string) {
+			defer func() { <-semaphore }() // Release semaphore
+			scanNamespace(ctx, clientset, namespace, resultChan, &wg)
+		}(ns)
+	}
 
-		// Check Pods
-		if pods, err := clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, pod := range pods.Items {
-				findConfigMapsInPodSpec(pod.Spec, ns, usedConfigMaps)
-			}
-		}
+	// Start a goroutine to close result channel when all work is done
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
 
-		// Check Deployments
-		if deployments, err := clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, deployment := range deployments.Items {
-				findConfigMapsInPodSpec(deployment.Spec.Template.Spec, ns, usedConfigMaps)
-			}
-		}
-
-		// Check StatefulSets
-		if statefulsets, err := clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, sts := range statefulsets.Items {
-				findConfigMapsInPodSpec(sts.Spec.Template.Spec, ns, usedConfigMaps)
-			}
-		}
-
-		// Check DaemonSets
-		if daemonsets, err := clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, ds := range daemonsets.Items {
-				findConfigMapsInPodSpec(ds.Spec.Template.Spec, ns, usedConfigMaps)
-			}
-		}
-
-		// Check Jobs
-		if jobs, err := clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, job := range jobs.Items {
-				findConfigMapsInPodSpec(job.Spec.Template.Spec, ns, usedConfigMaps)
-			}
-		}
-
-		// Check CronJobs
-		if cronjobs, err := clientset.BatchV1().CronJobs(ns).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, cronjob := range cronjobs.Items {
-				findConfigMapsInPodSpec(cronjob.Spec.JobTemplate.Spec.Template.Spec, ns, usedConfigMaps)
-			}
+	// Collect results
+	usedConfigMaps := make(map[ConfigMapRef]bool)
+	for result := range resultChan {
+		for cm := range result.usedConfigMaps {
+			usedConfigMaps[cm] = true
 		}
 	}
 
+	// Get all ConfigMaps
 	allConfigMaps := make(map[ConfigMapRef]bool)
 	for _, ns := range namespacesToScan {
 		if configMaps, err := clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{}); err == nil {

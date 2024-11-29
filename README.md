@@ -38,6 +38,7 @@ The tool scans your cluster for ConfigMap references in various Kubernetes resou
 
 2. Initialize the Go module and install dependencies:
     ```bash
+    go mod init configmap-cleaner
     go mod tidy
     ```
 
