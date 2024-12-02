@@ -322,14 +322,25 @@ func printSortedConfigMaps(configMaps map[ConfigMapRef]bool) {
 	})
 
 	for _, ref := range refs {
-		fmt.Printf("Namespace: %s, Configmap: %s\n", ref.namespace, ref.name)
+		if isSystemConfigMap(ref.name) || isSystemNamespace(ref.namespace) {
+			fmt.Printf("Namespace: %s, Configmap: %s (protected)\n", ref.namespace, ref.name)
+		} else {
+			fmt.Printf("Namespace: %s, Configmap: %s\n", ref.namespace, ref.name)
+		}
 	}
 }
 
 func deleteUnusedConfigMaps(ctx context.Context, clientset *kubernetes.Clientset, unusedConfigMaps map[ConfigMapRef]bool) {
 	var failed []ConfigMapRef
+	var skipped []ConfigMapRef
 
 	for cm := range unusedConfigMaps {
+		// Skip system ConfigMaps and ConfigMaps in system namespaces
+		if isSystemConfigMap(cm.name) || isSystemNamespace(cm.namespace) {
+			skipped = append(skipped, cm)
+			continue
+		}
+
 		err := clientset.CoreV1().ConfigMaps(cm.namespace).Delete(ctx, cm.name, metav1.DeleteOptions{})
 		if err != nil {
 			failed = append(failed, cm)
@@ -339,12 +350,85 @@ func deleteUnusedConfigMaps(ctx context.Context, clientset *kubernetes.Clientset
 		}
 	}
 
+	if len(skipped) > 0 {
+		fmt.Printf("\nSkipped %d system ConfigMaps:\n", len(skipped))
+		for _, cm := range skipped {
+			fmt.Printf("- %s/%s\n", cm.namespace, cm.name)
+		}
+	}
+
 	if len(failed) > 0 {
 		fmt.Printf("\nFailed to delete %d ConfigMaps:\n", len(failed))
 		for _, cm := range failed {
 			fmt.Printf("- %s/%s\n", cm.namespace, cm.name)
 		}
 	} else {
-		fmt.Printf("\nSuccessfully delete all %d unused ConfigMaps\n", len(unusedConfigMaps))
+		fmt.Printf("\nSuccessfully delete all %d unused ConfigMaps\n", len(unusedConfigMaps)-len(skipped))
 	}
+}
+
+func isSystemConfigMap(name string) bool {
+	// List of protected system ConfigMaps
+	systemConfigMaps := []string{
+		"kube-root-ca.crt",                   // Root CA certificate
+		"extension-apiserver-authentication", // API server authentication
+		"cluster-info",                       // Cluster information
+		"coredns",                            // DNS configuration
+		"kube-proxy",                         // Proxy configuration
+		"kubeadm-config",                     // Kubeadm configuration
+		"kubelet-config",                     // Kubelet configuration
+		"aws-auth",                           // AWS EKS authentication
+		"azure-cloud-provider",               // Azure cloud provider configuration
+		"gcp-config",                         // GCP configuration
+		"istio-ca-root-cert",                 // Istio root certificate
+		"prometheus-config",                  // Prometheus configuration
+		"calico-config",                      // Calico CNI configuration
+		"weave-net",                          // Weave Net CNI configuration
+		"flannel-cfg",                        // Flannel CNI configuration
+		"cilium-config",                      // Cilium CNI configuration
+	}
+
+	systemPrefixes := []string{
+		"kube-",                      // Kubernetes system ConfigMaps
+		"system-",                    // System ConfigMaps
+		"istio-",                     // Istio service mesh
+		"linkerd-",                   // Linkerd service mesh
+		"cert-manager-",              // Cert-manager
+		"ingress-controller-leader-", // Ingress controller
+		"extension-apiserver-",       // API server extensions
+	}
+
+	for _, systemCM := range systemConfigMaps {
+		if name == systemCM {
+			return true
+		}
+	}
+
+	for _, prefix := range systemPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isSystemNamespace(namespace string) bool {
+	systemNamespaces := []string{
+		"kube-system",
+		"kube-public",
+		"kube-node-lease",
+		"cert-manager",
+		"istio-system",
+		"monitoring",
+		"ingress-nginx",
+	}
+
+	for _, ns := range systemNamespaces {
+		if namespace == ns {
+			return true
+		}
+	}
+
+	return false
 }
