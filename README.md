@@ -139,7 +139,10 @@ ConfigMaps in the following namespaces are also protected:
 
 ## Output Example
 
+### List Unused ConfigMaps
+
 ```bash
+$ ./configmap-cleaner --namespace my-namespace
 Using current context: my-cluster-context
 Scanning namespace: my-namespace
 
@@ -153,6 +156,38 @@ Unused ConfigMaps:
 Namespace: my-namespace, ConfigMap: old-config
 Namespace: my-namespace, ConfigMap: kube-root-ca.crt (protected)
 Namespace: my-namespace, ConfigMap: test-config
+```
+
+### Delete Unused ConfigMaps
+
+```bash
+$ ./configmap-cleaner --namespace my-namespace --delete
+Using current context: my-cluster-context
+Scanning namespace: my-namespace
+
+ConfigMaps currently in use:
+============================
+Namespace: my-namespace, ConfigMap: app-config
+Namespace: my-namespace, ConfigMap: logging-config
+
+Unused ConfigMaps:
+==================
+Namespace: my-namespace, ConfigMap: old-config
+Namespace: my-namespace, ConfigMap: kube-root-ca.crt (protected)
+Namespace: my-namespace, ConfigMap: test-config
+
+WARNING: You are about to delete 9 unused ConfigMaps.
+This action cannot be undone. Are you sure? (yes/no): yes
+
+Deleting ConfigMaps...
+
+Deleted ConfigMap old-config in namespace my-namespace
+Deleted ConfigMap test-config in namespace my-namespace
+
+Skipped 1 system ConfigMaps:
+- my-namespace/kube-root-ca.crt
+
+Successfully delete all 2 unused ConfigMaps
 ```
 
 ## Limitations

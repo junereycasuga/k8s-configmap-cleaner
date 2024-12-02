@@ -10,10 +10,21 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fatih/color"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+)
+
+var (
+	titleColor     = color.New(color.FgCyan, color.Bold)
+	namespaceColor = color.New(color.FgYellow)
+	successColor   = color.New(color.FgGreen)
+	errorColor     = color.New(color.FgRed)
+	warningColor   = color.New(color.FgYellow)
+	protectedColor = color.New(color.FgMagenta)
+	infoColor      = color.New(color.FgBlue)
 )
 
 type ConfigMapRef struct {
@@ -179,11 +190,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Using context: %s\n", currentContext)
+	infoColor.Printf("Using context: %s\n", currentContext)
 	if *namespace != "" {
-		fmt.Printf("Scanning namespace: %s\n", *namespace)
+		infoColor.Printf("Scanning namespace: %s\n", *namespace)
 	} else {
-		fmt.Println("Scanning all accessible namespaces")
+		infoColor.Println("Scanning all accessible namespaces")
 	}
 
 	ctx := context.Background()
@@ -249,11 +260,11 @@ func main() {
 	}
 
 	// Print results
-	fmt.Printf("\nConfigMaps currently in use:\n")
+	titleColor.Printf("\nConfigMaps currently in use:\n")
 	fmt.Println("================================")
 	printSortedConfigMaps(usedConfigMaps)
 
-	fmt.Printf("\nUnused ConfigMaps:\n")
+	titleColor.Printf("\nUnused ConfigMaps:\n")
 	fmt.Println("=================")
 	unusedConfigMaps := make(map[ConfigMapRef]bool)
 	for cm := range allConfigMaps {
@@ -265,8 +276,8 @@ func main() {
 
 	// Handle deletion if requested
 	if *deleteUnused && len(unusedConfigMaps) > 0 {
-		fmt.Printf("\nWARNING: You are about to delete %d unused ConfigMaps.\n", len(unusedConfigMaps))
-		fmt.Printf("This action cannot be undone. Are you sure? (yes/no): ")
+		warningColor.Printf("\nWARNING: You are about to delete %d unused ConfigMaps.\n", len(unusedConfigMaps))
+		warningColor.Printf("This action cannot be undone. Are you sure? (yes/no): ")
 
 		reader := bufio.NewReader(os.Stdin)
 		response, _ := reader.ReadString('\n')
@@ -322,10 +333,12 @@ func printSortedConfigMaps(configMaps map[ConfigMapRef]bool) {
 	})
 
 	for _, ref := range refs {
+		namespaceColor.Printf("Namespace: %s, ", ref.namespace)
 		if isSystemConfigMap(ref.name) || isSystemNamespace(ref.namespace) {
-			fmt.Printf("Namespace: %s, Configmap: %s (protected)\n", ref.namespace, ref.name)
+			fmt.Printf("ConfigMap: ")
+			protectedColor.Printf("%s(protected)\n", ref.name)
 		} else {
-			fmt.Printf("Namespace: %s, Configmap: %s\n", ref.namespace, ref.name)
+			fmt.Printf("Configmap: %s\n", ref.name)
 		}
 	}
 }
@@ -351,19 +364,19 @@ func deleteUnusedConfigMaps(ctx context.Context, clientset *kubernetes.Clientset
 	}
 
 	if len(skipped) > 0 {
-		fmt.Printf("\nSkipped %d system ConfigMaps:\n", len(skipped))
+		warningColor.Printf("\nSkipped %d system ConfigMaps:\n", len(skipped))
 		for _, cm := range skipped {
-			fmt.Printf("- %s/%s\n", cm.namespace, cm.name)
+			protectedColor.Printf("- %s/%s\n", cm.namespace, cm.name)
 		}
 	}
 
 	if len(failed) > 0 {
-		fmt.Printf("\nFailed to delete %d ConfigMaps:\n", len(failed))
+		errorColor.Printf("\nFailed to delete %d ConfigMaps:\n", len(failed))
 		for _, cm := range failed {
 			fmt.Printf("- %s/%s\n", cm.namespace, cm.name)
 		}
 	} else {
-		fmt.Printf("\nSuccessfully deleted all %d unused ConfigMaps\n", len(unusedConfigMaps)-len(skipped))
+		successColor.Printf("\nSuccessfully deleted all %d unused ConfigMaps\n", len(unusedConfigMaps)-len(skipped))
 	}
 }
 
