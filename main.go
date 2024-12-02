@@ -363,7 +363,7 @@ func deleteUnusedConfigMaps(ctx context.Context, clientset *kubernetes.Clientset
 			fmt.Printf("- %s/%s\n", cm.namespace, cm.name)
 		}
 	} else {
-		fmt.Printf("\nSuccessfully delete all %d unused ConfigMaps\n", len(unusedConfigMaps)-len(skipped))
+		fmt.Printf("\nSuccessfully deleted all %d unused ConfigMaps\n", len(unusedConfigMaps)-len(skipped))
 	}
 }
 

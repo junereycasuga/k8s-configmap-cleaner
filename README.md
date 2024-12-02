@@ -12,6 +12,8 @@ The tool scans your cluster for ConfigMap references in various Kubernetes resou
     - DaemonSets
     - Jobs
     - CronJobs
+- Concurrent scanning of namespaces and resources for improved performance
+- Protection of system-critical ConfigMaps
 - Checks both volume mounts and environment variables
 - Supports scanning specific namespaces or entire cluster
 - Interactive deletion confirmation for safety
@@ -96,6 +98,45 @@ go run main.go --namespace my-namespace --delete
 4. Comprehensive error reporting
 5. Namespaces validation before operations
 
+## Protected ConfigMaps
+
+The tool automatically protects system-criticla ConfigMaps from deletion. 
+Protected ConfigMaps are marked with "(protected)" in the output.
+These include:
+
+### System ConfigMaps
+
+- kube-root-ca.crt (cluster CA certificate)
+- extension-apiserver-authentication (kube-apiserver authentication)
+- cluster-info (cluster information)
+- coredns (CoreDNS configuration)
+- kube-proxy (kube-proxy configuration)
+- kubeadm-config (kubeadm configuration)
+- kubelet-config (kubelet configuration)
+- Various cloud provider configs (aws-auth, azure-cloud-provider, gcp-config)
+
+### ConfigMaps with Protected Prefixes
+
+- kube-*
+- system-*
+- istio-*
+- linkerd-*
+- cert-manager-*
+- ingress-controller-leader-*
+- extension-apiserver-*
+
+### Protected Namespaces
+
+ConfigMaps in the following namespaces are also protected:
+
+- kube-system
+- kube-public
+- kube-node-lease
+- cert-manager
+- istio-system
+- monitoring
+- ingress-nginx
+
 ## Output Example
 
 ```bash
@@ -110,6 +151,7 @@ Namespace: my-namespace, ConfigMap: logging-config
 Unused ConfigMaps:
 ==================
 Namespace: my-namespace, ConfigMap: old-config
+Namespace: my-namespace, ConfigMap: kube-root-ca.crt (protected)
 Namespace: my-namespace, ConfigMap: test-config
 ```
 
@@ -137,3 +179,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Disclaimer
 
 This tool comes with no warranties. Always verify the results before deleting any resources from your cluster.
+Protected ConfigMaps are safeguarded, but you should still review the output carefully before proceeding with deletion.
